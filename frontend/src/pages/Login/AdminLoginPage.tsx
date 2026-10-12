@@ -60,11 +60,11 @@ export const AdminLoginPage: React.FC = () => {
 
         <form onSubmit={handleSubmit}>
           <div className="admin-form-group">
-            <label>Email Admin</label>
+            <label>Tài khoản hoặc Email Admin</label>
             <input
-              type="email"
+              type="text"
               required
-              placeholder="admin@utc.edu.vn"
+              placeholder="admin hoặc admin@utc.edu.vn"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
