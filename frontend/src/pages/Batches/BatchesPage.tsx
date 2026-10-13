@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { AdminLayout } from '../../components/layout/AdminLayout';
 import { apiClient } from '../../api/client';
 import './BatchesPage.css';
+import '../../components/common/Modal.css';
 
 interface AcademicBatch {
   id: number;
@@ -56,6 +57,21 @@ export const BatchesPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
 
+  // Subtabs inside selected batch: 'students' or 'classes'
+  const [batchDetailTab, setBatchDetailTab] = useState<'students' | 'classes'>('students');
+  const [students, setStudents] = useState<any[]>([]);
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [studentSearch, setStudentSearch] = useState('');
+
+  // Toast Notification State
+  const [toast, setToast] = useState<{ show: boolean; type: 'success' | 'error' | 'info'; message: string } | null>(null);
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ show: true, type, message });
+    setTimeout(() => {
+      setToast(null);
+    }, 4000);
+  };
+
   // New batch form
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newBatchCode, setNewBatchCode] = useState('');
@@ -67,6 +83,19 @@ export const BatchesPage: React.FC = () => {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<any>(null);
+
+  // Add Manual Student Modal form
+  const [showAddStudentModal, setShowAddStudentModal] = useState(false);
+  const [addMssv, setAddMssv] = useState('');
+  const [addFullName, setAddFullName] = useState('');
+  const [addClassId, setAddClassId] = useState<number | ''>('');
+  const [addClassName, setAddClassName] = useState('');
+  const [addEduProgram, setAddEduProgram] = useState<'BACHELOR' | 'ENGINEER'>('BACHELOR');
+  const [addMajor, setAddMajor] = useState<'CNTT' | 'KHMT'>('CNTT');
+  const [addEmail, setAddEmail] = useState('');
+  const [addPhone, setAddPhone] = useState('');
+  const [addLoading, setAddLoading] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
 
   // New Department Modal
   const [showDeptModal, setShowDeptModal] = useState(false);
@@ -127,11 +156,39 @@ export const BatchesPage: React.FC = () => {
     }
   };
 
+  const fetchStudents = async (batchId: number) => {
+    try {
+      setStudentsLoading(true);
+      const res = await apiClient.get(`/admin/users/?user_type=student&batch_id=${batchId}`);
+      const list = Array.isArray(res.data) ? res.data : (res.data?.users || res.data?.results || []);
+      setStudents(list);
+    } catch (err) {
+      console.error('Error fetching students of batch:', err);
+      setStudents([]);
+    } finally {
+      setStudentsLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchBatches();
     fetchDepartments();
     fetchSupervisors();
   }, []);
+
+  useEffect(() => {
+    if (selectedBatchId) {
+      fetchStudents(selectedBatchId);
+      const curr = batches.find((b) => b.id === selectedBatchId);
+      if (curr) {
+        if (curr.program_type === 'ENGINEER') {
+          setAddEduProgram('ENGINEER');
+        } else {
+          setAddEduProgram('BACHELOR');
+        }
+      }
+    }
+  }, [selectedBatchId, batches]);
 
   const handleCreateBatch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -148,9 +205,11 @@ export const BatchesPage: React.FC = () => {
       setNewBatchCode('');
       setNewBatchName('');
       setNewProgramType('BACHELOR');
+      showToast('✓ Tạo đợt đồ án tốt nghiệp mới thành công!', 'success');
       fetchBatches();
-    } catch (err) {
-      alert('Lỗi tạo đợt đồ án: ' + JSON.stringify(err));
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || err.message || 'Lỗi tạo đợt đồ án';
+      showToast(`❌ ${msg}`, 'error');
     }
   };
 
@@ -169,11 +228,112 @@ export const BatchesPage: React.FC = () => {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
       setImportResult(res.data);
+      showToast('✓ Import file Excel sinh viên thành công!', 'success');
       fetchBatches();
+      fetchStudents(selectedBatchId);
     } catch (err: any) {
-      alert('Lỗi import Excel: ' + (err.response?.data?.detail || err.message));
+      const msg = err.response?.data?.detail || err.message || 'Lỗi import Excel';
+      showToast(`❌ ${msg}`, 'error');
     } finally {
       setImporting(false);
+    }
+  };
+
+  // Export Students in the exact format of Import Excel
+  const handleExportStudents = async () => {
+    if (!selectedBatchId) {
+      showToast('Vui lòng chọn một đợt đồ án để xuất danh sách sinh viên!', 'info');
+      return;
+    }
+    const currBatch = batches.find((b) => b.id === selectedBatchId);
+    try {
+      showToast('Đang kết xuất file Excel sinh viên chuẩn định dạng import...', 'info');
+      const res = await apiClient.get(`/admin/students/export-excel/?batch_id=${selectedBatchId}`, {
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Danh_Sach_Sinh_Vien_Dot_${currBatch?.batch_code || selectedBatchId}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+      showToast('✓ Đã xuất file Excel sinh viên thành công!', 'success');
+    } catch (err: any) {
+      showToast('❌ Lỗi xuất file Excel: ' + (err.message || 'Không thể tải file'), 'error');
+    }
+  };
+
+  // Add Manual Student Handler
+  const handleAddStudentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!addMssv.trim() || !addFullName.trim()) {
+      showToast('Mã sinh viên và Họ tên là các trường bắt buộc!', 'error');
+      return;
+    }
+    if (!selectedBatchId) {
+      showToast('Vui lòng chọn một đợt đồ án trước khi thêm sinh viên!', 'error');
+      return;
+    }
+
+    setAddLoading(true);
+    setAddError(null);
+
+    const parts = addFullName.trim().split(' ');
+    const firstName = parts.length > 1 ? parts.pop()! : parts[0];
+    const lastName = parts.join(' ');
+
+    const payload: any = {
+      user_type: 'student',
+      username: addMssv.trim(),
+      registration_no: addMssv.trim(),
+      first_name: firstName,
+      last_name: lastName,
+      academic_batch_id: selectedBatchId,
+      education_program: addEduProgram,
+      major: addMajor,
+      email: addEmail.trim() || `${addMssv.trim().toLowerCase()}@sv.utc.edu.vn`,
+      phone_number: addPhone.trim(),
+      password: 'Sv@123456',
+    };
+
+    if (addClassId) {
+      payload.course_class_id = Number(addClassId);
+    }
+    if (addClassName.trim()) {
+      payload.class_name = addClassName.trim();
+    }
+
+    try {
+      await apiClient.post('/admin/users/', payload);
+      setShowAddStudentModal(false);
+      setAddMssv('');
+      setAddFullName('');
+      setAddClassId('');
+      setAddClassName('');
+      setAddEmail('');
+      setAddPhone('');
+      showToast(`✓ Đã thêm sinh viên ${addMssv.trim()} - ${addFullName.trim()} thành công!`, 'success');
+      // Refetch table data
+      fetchBatches();
+      fetchStudents(selectedBatchId);
+    } catch (err: any) {
+      const errData = err.response?.data;
+      const errMsg =
+        errData?.username?.[0] ||
+        errData?.registration_no?.[0] ||
+        errData?.email?.[0] ||
+        errData?.detail ||
+        err.message ||
+        'Không thể thêm sinh viên';
+      setAddError(errMsg);
+      showToast(`❌ Thêm sinh viên thất bại: ${errMsg}`, 'error');
+    } finally {
+      setAddLoading(false);
     }
   };
 
@@ -190,9 +350,10 @@ export const BatchesPage: React.FC = () => {
       setDeptCode('');
       setDeptName('');
       setDeptDesc('');
+      showToast('✓ Thêm bộ môn mới thành công!', 'success');
       fetchDepartments();
     } catch (err: any) {
-      alert('Lỗi tạo bộ môn: ' + (err.response?.data?.detail || err.message));
+      showToast('❌ Lỗi tạo bộ môn: ' + (err.response?.data?.detail || err.message), 'error');
     }
   };
 
@@ -216,9 +377,9 @@ export const BatchesPage: React.FC = () => {
       });
       setEditingSupervisor(null);
       fetchSupervisors();
-      alert('Đã cập nhật học vị & hệ số capacity của Giảng viên thành công!');
+      showToast('✓ Đã cập nhật học vị & hệ số capacity của Giảng viên thành công!', 'success');
     } catch (err: any) {
-      alert('Lỗi cập nhật giảng viên: ' + (err.response?.data?.detail || err.message));
+      showToast('❌ Lỗi cập nhật giảng viên: ' + (err.response?.data?.detail || err.message), 'error');
     }
   };
 
@@ -226,12 +387,25 @@ export const BatchesPage: React.FC = () => {
     if (!confirm('Bạn có chắc chắn muốn KẾT THÚC đợt đồ án này? Sau khi kết thúc, trạng thái đợt sẽ hoàn tất.')) return;
     try {
       await apiClient.post(`/admin/batches/${batchId}/close/`);
-      alert('Đã kết thúc đợt đồ án thành công!');
+      showToast('✓ Đã kết thúc đợt đồ án thành công!', 'success');
       fetchBatches();
     } catch (err: any) {
-      alert('Lỗi kết thúc đợt: ' + (err.response?.data?.detail || err.message));
+      showToast('❌ Lỗi kết thúc đợt: ' + (err.response?.data?.detail || err.message), 'error');
     }
   };
+
+  // Filter students for table display
+  const filteredStudents = students.filter((s) => {
+    if (!studentSearch.trim()) return true;
+    const q = studentSearch.trim().toLowerCase();
+    const fullName = (s.full_name || `${s.last_name || ''} ${s.first_name || ''}`).toLowerCase();
+    const regNo = (s.student_profile?.registration_no || s.username || '').toLowerCase();
+    const cls = (s.student_profile?.course_class?.class_name || s.student_profile?.department || '').toLowerCase();
+    const eml = (s.email || '').toLowerCase();
+    return fullName.includes(q) || regNo.includes(q) || cls.includes(q) || eml.includes(q);
+  });
+
+  const currBatch = batches.find((b) => b.id === selectedBatchId);
 
   return (
     <AdminLayout>
@@ -242,7 +416,7 @@ export const BatchesPage: React.FC = () => {
             className={`utc-subnav-btn ${activeTab === 'batches' ? 'active' : ''}`}
             onClick={() => setActiveTab('batches')}
           >
-            📅 Đợt Đồ Án & Lớp Học Phần
+            📅 Đợt Đồ Án & Sinh Viên Thuộc Đợt
           </button>
           <button
             className={`utc-subnav-btn ${activeTab === 'departments' ? 'active' : ''}`}
@@ -258,20 +432,56 @@ export const BatchesPage: React.FC = () => {
           </button>
         </div>
 
-        {/* TAB 1: BATCHES */}
+        {/* TAB 1: BATCHES & STUDENTS */}
         {activeTab === 'batches' && (
           <>
             <div className="utc-batches-header-bar">
               <div className="utc-batches-header-info">
-                <h3>Giai Đoạn 1: Khởi Tạo Đợt Đồ Án & Thiết Lập Dữ Liệu</h3>
-                <p>Khởi tạo đợt đồ án theo Chương trình đào tạo (Cử nhân / Kỹ sư) và import sinh viên UTC</p>
+                <h3>Giai Đoạn 1: Khởi Tạo Đợt Đồ Án & Quản Lý Sinh Viên UTC</h3>
+                <p>Khởi tạo đợt đồ án, thêm sinh viên thủ công hoặc import/export danh sách Excel chuẩn format đào tạo UTC</p>
               </div>
               <div className="utc-batches-actions">
-                <button onClick={() => setShowCreateModal(true)} className="utc-btn-primary">
-                  <span>➕</span> Tạo đợt ĐATN mới
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddError(null);
+                    if (currBatch && currBatch.program_type !== 'BOTH') {
+                      setAddEduProgram(currBatch.program_type);
+                    }
+                    setShowAddStudentModal(true);
+                  }}
+                  className="utc-btn-primary"
+                  title="Thêm sinh viên thủ công vào đợt ĐATN"
+                >
+                  <span>👤➕</span> Thêm Sinh Viên
                 </button>
-                <button onClick={() => setShowImportModal(true)} className="utc-btn-emerald">
+
+                <button
+                  type="button"
+                  onClick={() => setShowImportModal(true)}
+                  className="utc-btn-emerald"
+                  title="Import sinh viên từ file Excel UTC"
+                >
                   <span>📊</span> Import Sinh Viên (Excel)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleExportStudents}
+                  className="utc-btn-outline"
+                  title="Xuất danh sách sinh viên đợt này ra file Excel đúng định dạng file mẫu import"
+                >
+                  <span>📤</span> Export Sinh Viên (.xlsx)
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowCreateModal(true)}
+                  className="utc-btn-primary"
+                  style={{ background: '#475569' }}
+                  title="Tạo đợt làm đồ án mới"
+                >
+                  <span>➕</span> Tạo đợt ĐATN mới
                 </button>
               </div>
             </div>
@@ -321,7 +531,7 @@ export const BatchesPage: React.FC = () => {
                     </div>
 
                     <div className="utc-batch-footer">
-                      <span>{batch.is_closed ? 'Đợt đã lưu trữ' : 'Nhấp để xem chi tiết lớp học'}</span>
+                      <span>{batch.is_closed ? 'Đợt đã lưu trữ' : 'Nhấp để xem sinh viên & lớp học'}</span>
                       {!batch.is_closed && (
                         <button
                           onClick={(e) => {
@@ -344,50 +554,160 @@ export const BatchesPage: React.FC = () => {
             {selectedBatchId && (
               <div className="utc-classes-section">
                 <div className="utc-classes-header">
-                  <h4>Danh sách Lớp học phần thuộc đợt: #{selectedBatchId}</h4>
-                  <span className="utc-classes-subtitle">Tự động phân loại từ file Excel đăng ký tín chỉ UTC</span>
+                  <h4>Quản lý Dữ liệu Đợt ĐATN: #{selectedBatchId} - {currBatch?.batch_name}</h4>
+                  <span className="utc-classes-subtitle">Rà soát danh sách sinh viên & các lớp học phần được phân công trong đợt</span>
                 </div>
 
-                {(() => {
-                  const curr = batches.find((b) => b.id === selectedBatchId);
-                  if (!curr || !curr.classes || curr.classes.length === 0) {
-                    return <div className="utc-empty-classes">Đợt này chưa có dữ liệu lớp học phần. Hãy nhấn nút Import Excel.</div>;
-                  }
-                  return (
-                    <div className="utc-classes-table-wrapper">
-                      <table className="utc-classes-table">
-                        <thead>
-                          <tr>
-                            <th>Mã Lớp HP</th>
-                            <th>Tên Lớp Học Phần</th>
-                            <th>Chương trình</th>
-                            <th>Hệ đào tạo</th>
-                            <th>Nhóm</th>
-                            <th>Số Sinh Viên</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {curr.classes.map((cls) => (
-                            <tr key={cls.id}>
-                              <td className="font-bold">{cls.class_code}</td>
-                              <td>{cls.class_name}</td>
-                              <td>
-                                <span className="utc-badge-prog">{cls.program_type}</span>
-                              </td>
-                              <td>
-                                <span className={`utc-badge-edu ${cls.education_program === 'ENGINEER' ? 'edu-ks' : 'edu-cn'}`}>
-                                  {cls.education_program === 'ENGINEER' ? '⚙️ Kỹ sư' : '🎓 Cử nhân'}
-                                </span>
-                              </td>
-                              <td>{cls.class_group || '—'}</td>
-                              <td className="text-center font-bold text-blue-600">{cls.student_count}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                <div className="utc-batch-subtabs">
+                  <button
+                    type="button"
+                    className={`utc-batch-subtab-btn ${batchDetailTab === 'students' ? 'active' : ''}`}
+                    onClick={() => setBatchDetailTab('students')}
+                  >
+                    <span>🎓</span> Danh Sách Sinh Viên Thuộc Đợt
+                    <span className="utc-batch-subtab-badge">{students.length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`utc-batch-subtab-btn ${batchDetailTab === 'classes' ? 'active' : ''}`}
+                    onClick={() => setBatchDetailTab('classes')}
+                  >
+                    <span>🏫</span> Danh Sách Lớp Học Phần
+                    <span className="utc-batch-subtab-badge">{currBatch?.classes?.length || 0}</span>
+                  </button>
+                </div>
+
+                {/* Subtab Content: Students */}
+                {batchDetailTab === 'students' && (
+                  <div>
+                    <div className="utc-student-search-bar">
+                      <input
+                        type="text"
+                        placeholder="🔍 Tìm kiếm sinh viên theo MSSV, Họ tên, Lớp..."
+                        value={studentSearch}
+                        onChange={(e) => setStudentSearch(e.target.value)}
+                        className="utc-search-input"
+                      />
+                      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                        <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                          Hiển thị <strong>{filteredStudents.length}</strong> / {students.length} sinh viên
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAddError(null);
+                            setShowAddStudentModal(true);
+                          }}
+                          className="utc-btn-sm-edit"
+                          style={{ background: '#0284c7', color: '#fff', borderColor: '#0284c7', padding: '0.45rem 0.85rem' }}
+                        >
+                          ➕ Thêm Sinh Viên Mới
+                        </button>
+                      </div>
                     </div>
-                  );
-                })()}
+
+                    {studentsLoading ? (
+                      <div className="utc-loading-box">Đang tải danh sách sinh viên...</div>
+                    ) : filteredStudents.length === 0 ? (
+                      <div className="utc-empty-classes">
+                        {students.length === 0
+                          ? 'Đợt này chưa có sinh viên nào. Bạn có thể nhấn nút "Thêm Sinh Viên" hoặc "Import Sinh Viên (Excel)" phía trên.'
+                          : 'Không tìm thấy sinh viên nào khớp với từ khóa tìm kiếm.'}
+                      </div>
+                    ) : (
+                      <div className="utc-classes-table-wrapper">
+                        <table className="utc-classes-table">
+                          <thead>
+                            <tr>
+                              <th style={{ width: '50px' }}>STT</th>
+                              <th>Mã Sinh Viên (MSSV)</th>
+                              <th>Họ và Tên</th>
+                              <th>Lớp Sinh Hoạt / HP</th>
+                              <th>Hệ Đào Tạo</th>
+                              <th>Email</th>
+                              <th>Số Điện Thoại</th>
+                              <th>Trạng Thái</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredStudents.map((st, idx) => {
+                              const stdProf = st.student_profile || {};
+                              const regNo = stdProf.registration_no || st.username;
+                              const fullName = st.full_name || `${st.last_name || ''} ${st.first_name || ''}`.trim() || st.username;
+                              const className = stdProf.course_class?.class_name || stdProf.department || stdProf.batch_no || '—';
+                              const eduProg = stdProf.education_program || stdProf.degree_program || (stdProf.course_class?.education_program) || 'BACHELOR';
+                              const phone = stdProf.phone_number || st.phone_number || '—';
+                              const email = st.email || `${regNo}@sv.utc.edu.vn`;
+
+                              return (
+                                <tr key={st.id || idx}>
+                                  <td className="text-center font-bold text-gray-500">{idx + 1}</td>
+                                  <td className="font-bold text-blue-700">{regNo}</td>
+                                  <td className="font-semibold">{fullName}</td>
+                                  <td>{className}</td>
+                                  <td>
+                                    <span className={`utc-badge-edu ${eduProg === 'ENGINEER' ? 'edu-ks' : 'edu-cn'}`}>
+                                      {eduProg === 'ENGINEER' ? '⚙️ Kỹ sư' : '🎓 Cử nhân'}
+                                    </span>
+                                  </td>
+                                  <td>{email}</td>
+                                  <td>{phone}</td>
+                                  <td>
+                                    <span className="utc-badge-active">
+                                      {st.is_active ? '🟢 Hoạt động' : '🔴 Khóa'}
+                                    </span>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Subtab Content: Classes */}
+                {batchDetailTab === 'classes' && (
+                  <div>
+                    {(!currBatch || !currBatch.classes || currBatch.classes.length === 0) ? (
+                      <div className="utc-empty-classes">Đợt này chưa có dữ liệu lớp học phần. Hãy nhấn nút Import Excel để tạo lớp tự động.</div>
+                    ) : (
+                      <div className="utc-classes-table-wrapper">
+                        <table className="utc-classes-table">
+                          <thead>
+                            <tr>
+                              <th>Mã Lớp HP</th>
+                              <th>Tên Lớp Học Phần</th>
+                              <th>Chương trình</th>
+                              <th>Hệ đào tạo</th>
+                              <th>Nhóm</th>
+                              <th>Số Sinh Viên</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {currBatch.classes.map((cls) => (
+                              <tr key={cls.id}>
+                                <td className="font-bold">{cls.class_code}</td>
+                                <td>{cls.class_name}</td>
+                                <td>
+                                  <span className="utc-badge-prog">{cls.program_type}</span>
+                                </td>
+                                <td>
+                                  <span className={`utc-badge-edu ${cls.education_program === 'ENGINEER' ? 'edu-ks' : 'edu-cn'}`}>
+                                    {cls.education_program === 'ENGINEER' ? '⚙️ Kỹ sư' : '🎓 Cử nhân'}
+                                  </span>
+                                </td>
+                                <td>{cls.class_group || '—'}</td>
+                                <td className="text-center font-bold text-blue-600">{cls.student_count}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -474,7 +794,7 @@ export const BatchesPage: React.FC = () => {
           </div>
         )}
 
-        {/* MODAL 1: CREATE BATCH (CHỌN CỬ NHÂN / KỸ SƯ) */}
+        {/* MODAL 1: CREATE BATCH */}
         {showCreateModal && (
           <div className="utc-modal-backdrop">
             <div className="utc-modal-card">
@@ -599,7 +919,7 @@ export const BatchesPage: React.FC = () => {
                     className="utc-input"
                   />
                   <small style={{ color: '#64748b', display: 'block', marginTop: '0.4rem' }}>
-                    File Excel xuất từ Cổng đào tạo UTC gồm các sheet chứa danh sách sinh viên theo lớp học phần.
+                    File Excel xuất từ Cổng đào tạo UTC hoặc file xuất từ nút "Export Sinh Viên" đều được hỗ trợ.
                   </small>
                 </div>
 
@@ -623,7 +943,193 @@ export const BatchesPage: React.FC = () => {
           </div>
         )}
 
-        {/* MODAL 3: CREATE DEPARTMENT */}
+        {/* MODAL 3: MANUAL ADD STUDENT FORM */}
+        {showAddStudentModal && (
+          <div className="utc-modal-backdrop">
+            <div className="utc-modal-card" style={{ maxWidth: '580px' }}>
+              <div className="utc-modal-head">
+                <h4>👤➕ Thêm Sinh Viên Thủ Công Vào Đợt ĐATN</h4>
+                <button
+                  type="button"
+                  onClick={() => setShowAddStudentModal(false)}
+                  className="utc-btn-close"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <form onSubmit={handleAddStudentSubmit}>
+                <div style={{ padding: '1.25rem' }}>
+                  {addError && (
+                    <div style={{ background: '#fef2f2', color: '#b91c1c', border: '1px solid #f87171', padding: '0.65rem 0.9rem', borderRadius: 8, marginBottom: '1rem', fontSize: '0.88rem' }}>
+                      ❌ {addError}
+                    </div>
+                  )}
+
+                  {/* Required Fields: MSSV & Họ và Tên */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.3fr', gap: '0.85rem', marginBottom: '0.9rem' }}>
+                    <div>
+                      <label style={{ display: 'block', fontWeight: 700, fontSize: '0.85rem', color: '#1e293b', marginBottom: 4 }}>
+                        Mã Sinh Viên (MSSV) <span style={{ color: '#dc2626' }}>*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="VD: 201200021"
+                        value={addMssv}
+                        onChange={(e) => {
+                          const val = e.target.value.trim();
+                          setAddMssv(val);
+                          if (!addEmail || addEmail.endsWith('@sv.utc.edu.vn')) {
+                            setAddEmail(val ? `${val.toLowerCase()}@sv.utc.edu.vn` : '');
+                          }
+                        }}
+                        className="utc-input"
+                        autoFocus
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontWeight: 700, fontSize: '0.85rem', color: '#1e293b', marginBottom: 4 }}>
+                        Họ và Tên <span style={{ color: '#dc2626' }}>*</span>
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        placeholder="VD: Nguyễn Hoàng Minh"
+                        value={addFullName}
+                        onChange={(e) => setAddFullName(e.target.value)}
+                        className="utc-input"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Program & Major Selection */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.85rem', marginBottom: '0.9rem' }}>
+                    <div>
+                      <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', color: '#1e293b', marginBottom: 4 }}>
+                        Hệ đào tạo <span style={{ color: '#dc2626' }}>*</span>
+                      </label>
+                      <select
+                        className="utc-input"
+                        value={addEduProgram}
+                        onChange={(e) => setAddEduProgram(e.target.value as 'BACHELOR' | 'ENGINEER')}
+                      >
+                        <option value="BACHELOR">🎓 Cử nhân (Bachelor)</option>
+                        <option value="ENGINEER">⚙️ Kỹ sư (Engineer)</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', color: '#1e293b', marginBottom: 4 }}>
+                        Ngành đào tạo
+                      </label>
+                      <select
+                        className="utc-input"
+                        value={addMajor}
+                        onChange={(e) => setAddMajor(e.target.value as 'CNTT' | 'KHMT')}
+                      >
+                        <option value="CNTT">💻 Công nghệ thông tin</option>
+                        <option value="KHMT">🧠 Khoa học máy tính</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Class Selection */}
+                  <div style={{ marginBottom: '0.9rem' }}>
+                    <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', color: '#1e293b', marginBottom: 4 }}>
+                      Lớp sinh hoạt / Lớp học phần
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: currBatch?.classes?.length ? '1.2fr 1fr' : '1fr', gap: '0.5rem' }}>
+                      {currBatch?.classes && currBatch.classes.length > 0 && (
+                        <select
+                          className="utc-input"
+                          value={addClassId}
+                          onChange={(e) => {
+                            const cid = e.target.value ? Number(e.target.value) : '';
+                            setAddClassId(cid);
+                            const found = currBatch.classes.find((c) => c.id === cid);
+                            if (found) {
+                              setAddClassName(found.class_name);
+                              setAddEduProgram(found.education_program as any || addEduProgram);
+                            }
+                          }}
+                        >
+                          <option value="">-- Chọn lớp có sẵn trong đợt --</option>
+                          {currBatch.classes.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.class_code} - {c.class_name} ({c.education_program})
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <input
+                        type="text"
+                        placeholder="Hoặc nhập tên lớp (vd: CNTT1-K62)"
+                        value={addClassName}
+                        onChange={(e) => setAddClassName(e.target.value)}
+                        className="utc-input"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Email & Phone */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '0.85rem', marginBottom: '0.5rem' }}>
+                    <div>
+                      <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', color: '#1e293b', marginBottom: 4 }}>
+                        Email sinh viên
+                      </label>
+                      <input
+                        type="email"
+                        placeholder="vd: 201200021@sv.utc.edu.vn"
+                        value={addEmail}
+                        onChange={(e) => setAddEmail(e.target.value)}
+                        className="utc-input"
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontWeight: 600, fontSize: '0.85rem', color: '#1e293b', marginBottom: 4 }}>
+                        Số điện thoại
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="vd: 0912345678"
+                        value={addPhone}
+                        onChange={(e) => setAddPhone(e.target.value)}
+                        className="utc-input"
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ background: '#f8fafc', padding: '0.75rem', borderRadius: 8, fontSize: '0.8rem', color: '#64748b', marginTop: '0.75rem' }}>
+                    💡 <strong>Ghi chú:</strong> Mật khẩu ban đầu mặc định là <code>Sv@123456</code> (hoặc MSSV). Sinh viên có thể đổi mật khẩu sau khi đăng nhập vào hệ thống.
+                  </div>
+                </div>
+
+                <div className="utc-modal-foot">
+                  <button
+                    type="button"
+                    onClick={() => setShowAddStudentModal(false)}
+                    className="utc-btn-cancel"
+                    disabled={addLoading}
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    className="utc-btn-primary"
+                    disabled={addLoading}
+                  >
+                    {addLoading ? 'Đang lưu...' : 'Lưu Sinh Viên'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL 4: CREATE DEPARTMENT */}
         {showDeptModal && (
           <div className="utc-modal-backdrop">
             <div className="utc-modal-card">
@@ -673,7 +1179,7 @@ export const BatchesPage: React.FC = () => {
           </div>
         )}
 
-        {/* MODAL 4: EDIT SUPERVISOR */}
+        {/* MODAL 5: EDIT SUPERVISOR */}
         {editingSupervisor && (
           <div className="utc-modal-backdrop">
             <div className="utc-modal-card">
@@ -749,6 +1255,22 @@ export const BatchesPage: React.FC = () => {
                   <button type="submit" className="utc-btn-primary">Lưu Thay Đổi</button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* TOAST NOTIFICATION POPUP */}
+        {toast && (
+          <div className="utc-toast-container">
+            <div className={`utc-toast-item ${toast.type}`}>
+              <span>{toast.message}</span>
+              <button
+                type="button"
+                onClick={() => setToast(null)}
+                className="utc-toast-close"
+              >
+                ✕
+              </button>
             </div>
           </div>
         )}

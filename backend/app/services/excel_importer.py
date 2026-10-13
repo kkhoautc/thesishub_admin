@@ -473,6 +473,118 @@ class ExcelImportService:
         return buffer
 
     @staticmethod
+    def export_students_import_format(batch_id):
+        """
+        Export danh sách sinh viên thuộc Đợt ĐATN ra file Excel có định dạng CỘT giống 100% file lúc Import.
+        Người dùng có thể xuất file, chỉnh sửa và import ngược lại hệ thống mà không bị lỗi.
+        """
+        try:
+            batch = AcademicBatch.objects.get(id=batch_id)
+        except AcademicBatch.DoesNotExist:
+            batch = AcademicBatch.objects.filter(is_active=True).first()
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        if ws is None:
+            ws = wb.create_sheet()
+        ws.title = "Danh_Sach_Sinh_Vien"
+
+        header_fill = PatternFill(start_color="1E3A8A", end_color="1E3A8A", fill_type="solid")
+        header_font = Font(name="Arial", size=11, bold=True, color="FFFFFF")
+        border = Border(
+            left=Side(style='thin', color='D0D5DD'),
+            right=Side(style='thin', color='D0D5DD'),
+            top=Side(style='thin', color='D0D5DD'),
+            bottom=Side(style='thin', color='D0D5DD')
+        )
+
+        headers = [
+            "STT",
+            "Mã sinh viên (MSSV) *",
+            "Họ đệm *",
+            "Tên *",
+            "Ngành (CNTT/KHMT) *",
+            "Lớp sinh hoạt *",
+            "Hệ đào tạo",
+            "Số điện thoại",
+            "Email"
+        ]
+
+        ws.append(headers)
+        for col_num in range(1, len(headers) + 1):
+            cell = ws.cell(1, col_num)
+            cell.fill = header_fill
+            cell.font = header_font
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+        students_qs = Student.objects.filter(academic_batch=batch).select_related("user", "course_class").order_by("registration_no") if batch else Student.objects.none()
+
+        stt = 1
+        for s in students_qs:
+            user = s.user
+            first_n = user.first_name or ""
+            last_n = user.last_name or ""
+            if not first_n and not last_n:
+                parts = (user.get_full_name() or user.username).split()
+                if len(parts) > 1:
+                    first_n = parts[-1]
+                    last_n = " ".join(parts[:-1])
+                else:
+                    first_n = user.username
+
+            c_name = ""
+            if s.course_class:
+                c_name = s.course_class.class_name
+            elif s.department:
+                c_name = s.department
+            elif s.batch_no:
+                c_name = s.batch_no
+
+            major_val = "CNTT"
+            if s.course_class and s.course_class.program_type == "KHMT":
+                major_val = "KHMT"
+            elif s.department and "KHMT" in s.department.upper():
+                major_val = "KHMT"
+
+            edu_val = "Kỹ sư" if s.education_program == "ENGINEER" else "Cử nhân"
+
+            row = [
+                stt,
+                s.registration_no,
+                last_n,
+                first_n,
+                major_val,
+                c_name,
+                edu_val,
+                s.phone_number or "",
+                user.email or f"{s.registration_no}@sv.utc.edu.vn"
+            ]
+            ws.append(row)
+            stt += 1
+
+        for row in ws.iter_rows(min_row=2, max_row=max(2, ws.max_row), min_col=1, max_col=len(headers)):
+            for cell in row:
+                cell.font = Font(name="Arial", size=10)
+                cell.border = border
+                if cell.column in [1, 2, 5, 7]:
+                    cell.alignment = Alignment(horizontal="center", vertical="center")
+
+        ws.column_dimensions["A"].width = 8
+        ws.column_dimensions["B"].width = 24
+        ws.column_dimensions["C"].width = 20
+        ws.column_dimensions["D"].width = 15
+        ws.column_dimensions["E"].width = 22
+        ws.column_dimensions["F"].width = 25
+        ws.column_dimensions["G"].width = 16
+        ws.column_dimensions["H"].width = 18
+        ws.column_dimensions["I"].width = 32
+
+        buffer = io.BytesIO()
+        wb.save(buffer)
+        buffer.seek(0)
+        return buffer
+
+    @staticmethod
     def import_eligibility_from_excel(file_obj, batch_id):
         """
         Giai đoạn 4: Import kết quả xét điều kiện làm đồ án (GPA, số tín chỉ nợ, kết luận Đủ / Không đủ).

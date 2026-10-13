@@ -27,6 +27,7 @@ export const AdminLoginPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [filledMsg, setFilledMsg] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,6 +48,25 @@ export const AdminLoginPage: React.FC = () => {
     }
   };
 
+  const handleFillDemo = (usernameToFill: string, autoSubmit = false) => {
+    setEmail(usernameToFill);
+    setPassword('Admin@123456');
+    setError(null);
+    setFilledMsg(`✓ Đã điền: ${usernameToFill} • Mật khẩu: Admin@123456`);
+    setTimeout(() => setFilledMsg(null), 4000);
+
+    if (autoSubmit) {
+      setLoading(true);
+      login(usernameToFill, 'Admin@123456')
+        .then(() => navigate('/dashboard'))
+        .catch((err: any) => {
+          const msg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Đăng nhập thất bại.';
+          setError(msg);
+        })
+        .finally(() => setLoading(false));
+    }
+  };
+
   return (
     <div className="admin-login-wrapper">
       <div className="admin-login-card">
@@ -54,6 +74,41 @@ export const AdminLoginPage: React.FC = () => {
           <span style={{ fontSize: '3rem' }}>🎓</span>
           <h1>UTC ADMIN PORTAL</h1>
           <p style={{ color: '#64748b', fontSize: '0.9rem' }}>Quản trị hệ thống Đồ án Tốt nghiệp</p>
+        </div>
+
+        {/* Quick Demo Fill Box */}
+        <div className="admin-demo-box">
+          <div className="admin-demo-title">
+            <span>⚡ ĐIỀN MẪU TEST NHANH</span>
+            <span className="admin-demo-hint">Click 1 chạm để tự điền</span>
+          </div>
+          <div className="admin-demo-buttons">
+            <button
+              type="button"
+              className="admin-demo-chip primary"
+              onClick={() => handleFillDemo('admin')}
+              title="Điền username: admin | Mật khẩu: Admin@123456"
+            >
+              🔑 Điền: <strong>admin</strong>
+            </button>
+            <button
+              type="button"
+              className="admin-demo-chip"
+              onClick={() => handleFillDemo('admin@utc.edu.vn')}
+              title="Điền email: admin@utc.edu.vn | Mật khẩu: Admin@123456"
+            >
+              ✉️ Điền: <strong>admin@utc.edu.vn</strong>
+            </button>
+            <button
+              type="button"
+              className="admin-demo-chip instant"
+              onClick={() => handleFillDemo('admin', true)}
+              title="Tự điền và Đăng nhập ngay lập tức vào Admin Dashboard"
+            >
+              🚀 <strong>Đăng nhập ngay (1-Click)</strong>
+            </button>
+          </div>
+          {filledMsg && <div className="admin-demo-success">{filledMsg}</div>}
         </div>
 
         {error && <div className="utc-error-alert" style={{ marginBottom: '1rem', color: '#b91c1c', background: '#fee2e2', padding: '0.75rem', borderRadius: 8 }}>{error}</div>}
